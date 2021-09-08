@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package greet;
+option go_package="./calculator/calculatorpb";
+
+message InputNumber {
+  int32 firstNum = 1;
+  int32 secondNum = 2;
+}
+
+message CalculatorRequest {
+  InputNumber numbers = 1;
+}
+
+message CalculatorResponse {
+  int32 result = 1;
+}
+
+service SumService{
+  // Unary API
+  rpc Sum(CalculatorRequest) returns (CalculatorResponse) {};
+}
