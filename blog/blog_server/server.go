@@ -2,144 +2,55 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
-	"net"
 	"os"
-	"os/signal"
 
-	"github.com/ikalkali/belajar-grpc/blog/blogpb"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dbfixture"
+	"github.com/uptrace/bun/dialect/pgdialect"
+	"github.com/uptrace/bun/driver/pgdriver"
 )
 
-var collection *mongo.Collection
-
-type server struct{}
-
-type blogItem struct {
-	ID primitive.ObjectID `bson:"_id,omitempty"`
-	AuthorID string 			`bson:"author_id"`
-	Content string 				`bson:"content"`
-	Title string 					`bson:"title"`
+type User struct {
+	ID     int64
+	Name   string
+	Emails []string
 }
 
-func (*server) CreateBlog(ctx context.Context, req *blogpb.CreateBlogRequest) (*blogpb.CreateBlogResponse, error) {
-	blog := req.GetBlog()
-
-	data := blogItem{
-		AuthorID: blog.GetAuthorId(),
-		Title: blog.GetTitle(),
-		Content: blog.GetContent(),
-	}
-
-	res, err := collection.InsertOne(context.Background(), data)
-	if err != nil {
-		return nil, status.Errorf(
-			codes.Internal,
-			fmt.Sprint("Internal error: %v", err),
-		)
-	}
-
-	oid, ok := res.InsertedID.(primitive.ObjectID)
-	if !ok {
-		return nil, status.Errorf(
-			codes.Internal,
-			fmt.Sprint("Cannot parse OID: %v", err),
-		)
-	}
-
-	return &blogpb.CreateBlogResponse{
-		Blog: &blogpb.Blog{
-			Id: oid.Hex(),
-			AuthorId: blog.GetAuthorId(),
-			Title: blog.GetTitle(),
-			Content: blog.GetContent(),
-		},
-	}, nil
-}
-
-func (*server) ReadBlog(ctx context.Context, req *blogpb.ReadBlogRequest) (*blogpb.ReadBlogResponse, error) {
-	fmt.Println("Read blog request")
-	blogId := req.GetBlogId()
-	oid, err := primitive.ObjectIDFromHex(blogId)
-
-	if err != nil {
-		return nil, status.Errorf(
-			codes.InvalidArgument,
-			fmt.Sprintf("Cannot parse ID"),
-		)
-	}
-
-	data := &blogItem{}
-	filter := primitive.M{"_id" : oid}
-	res := collection.FindOne(context.Background(),filter)
-	if err := res.Decode(data); err != nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("Cannot find blog with the specified ID : %v", err),
-		)
-	}
-
-	return &blogpb.ReadBlogResponse{
-		Blog: &blogpb.Blog{
-			Id: data.ID.Hex(),
-			AuthorId: data.AuthorID,
-			Content: data.Content,
-			Title: data.Title,
-		},
-	}, nil
+type Story struct {
+	ID       int64
+	Title    string
+	AuthorID int64
+	Author   *User `bun:"rel:belongs-to"`
 }
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	dsn := "postgres://postgres:root@localhost:5432/grpc-blog?sslmode=disable"
+	ctx := context.Background()
 
-	lis, err := net.Listen("tcp", "127.0.0.1:50051")
+	// sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn), pgdriver))
+	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
+
+	db := bun.NewDB(sqldb, pgdialect.New())
+	err := db.Ping()
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.Fatalf("Error connecting to Postgre: %v", err)
+	}
+	fmt.Println("Connected to Postgres!")
+
+	db.RegisterModel((*User)(nil), (*Story)(nil))
+	fixture := dbfixture.New(db, dbfixture.WithRecreateTables())
+	if err := fixture.Load(ctx, os.DirFS("./blog/blog_server"), "fixture.yaml"); err != nil {
+		panic(err)
 	}
 
-	fmt.Println("Connection to MongoDB")
-	// Connect to mongo
-	client, err := mongo.Connect(
-		context.TODO(),
-		options.Client().ApplyURI("mongodb://127.0.0.1:27017"))
-	if err != nil {
-		log.Fatal(err)
+	users := make([]User, 0)
+	if err := db.NewSelect().Model(&users).OrderExpr("id ASC").Scan(ctx); err != nil {
+		panic(err)
 	}
-	defer func() {
-		if err = client.Disconnect(context.TODO()); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	fmt.Println("Blog service started")
-	collection = client.Database("mydb").Collection("Blog")
+	fmt.Printf("all users: %v\n\n", users)
 
-	opts := []grpc.ServerOption{}
-
-	s := grpc.NewServer(opts...)
-	blogpb.RegisterBlogServiceServer(s, &server{})
-
-	go func (){
-		if err := s.Serve(lis); err != nil {
-			log.Fatalf("failed to serve: %v", err)
-		}
-	}()
-
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt)
-
-	<-ch
-	fmt.Println("Stopping the server")
-	s.Stop()
-	fmt.Println("Closing the listener")
-	lis.Close()
-	fmt.Println("Closing MongoDB connection")
-	client.Disconnect(context.TODO())
-	fmt.Println("End")
-	
+	defer sqldb.Close()
 }
