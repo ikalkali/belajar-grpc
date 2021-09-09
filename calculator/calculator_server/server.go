@@ -14,8 +14,8 @@ type server struct{}
 
 func (*server) Sum(ctx context.Context, req *calculatorpb.CalculatorRequest) (*calculatorpb.CalculatorResponse, error) {
 	fmt.Printf("Sum function was invoked with %v", req)
-	firstNumber := req.GetNumbers().GetFirstNum()
-	secondNumber := req.GetNumbers().GetSecondNum()
+	firstNumber := req.FirstNumber
+	secondNumber := req.SecondNumber
 	result := firstNumber + secondNumber
 	res := &calculatorpb.CalculatorResponse{
 		Result: result,
@@ -38,4 +38,5 @@ func main() {
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve : %v", err)
 	}
+
 }

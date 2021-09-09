@@ -29,10 +29,8 @@ func main() {
 	c:=calculatorpb.NewSumServiceClient(cc)
 
 	req := &calculatorpb.CalculatorRequest{
-		Numbers: &calculatorpb.InputNumber{
-			FirstNum: firstNum,
-			SecondNum: secondNum,
-		},
+		FirstNumber: firstNum,
+		SecondNumber: secondNum,
 	}
 
 	res, err := c.Sum(context.Background(), req)
